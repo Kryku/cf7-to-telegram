@@ -18,7 +18,7 @@ function cf7_telegram_add_settings_page() {
         'manage_options',
         'cf7-telegram-settings',
         'cf7_telegram_render_settings_page',
-        'dashicons-email-alt',
+        'dashicons-format-chat',
         25
     );
 }
@@ -26,9 +26,23 @@ function cf7_telegram_add_settings_page() {
 add_action('admin_init', 'cf7_telegram_register_settings');
 function cf7_telegram_register_settings() {
     register_setting('cf7_telegram_settings_group', 'cf7_telegram_bot_token', 'sanitize_text_field');
-    register_setting('cf7_telegram_settings_group', 'cf7_telegram_chat_id', 'sanitize_text_field');
-    register_setting('cf7_telegram_settings_group', 'cf7_telegram_form_id', 'absint');
-    register_setting('cf7_telegram_settings_group', 'cf7_telegram_message_template', 'sanitize_textarea_field');
+    register_setting('cf7_telegram_settings_group', 'cf7_telegram_forms_config', [
+        'sanitize_callback' => 'cf7_telegram_sanitize_forms_config'
+    ]);
+}
+
+function cf7_telegram_sanitize_forms_config($input) {
+    $sanitized = [];
+    if (is_array($input)) {
+        foreach ($input as $form_id => $config) {
+            $sanitized[$form_id] = [
+                'enabled' => isset($config['enabled']) ? 1 : 0,
+                'chat_id' => sanitize_text_field($config['chat_id'] ?? ''),
+                'template' => sanitize_textarea_field($config['template'] ?? '')
+            ];
+        }
+    }
+    return $sanitized;
 }
 
 function cf7_telegram_render_settings_page() {
@@ -37,8 +51,8 @@ function cf7_telegram_render_settings_page() {
     }
 
     $forms = WPCF7_ContactForm::find();
-    $saved_form_id = get_option('cf7_telegram_form_id');
-    $saved_template = get_option('cf7_telegram_message_template', "🔔 New Submission\nName: [your-name]\nMessage: [your-message]");
+    $bot_token = get_option('cf7_telegram_bot_token');
+    $forms_config = get_option('cf7_telegram_forms_config', []);
     ?>
     <div class="wrap">
         <h1>CF7 to Telegram Settings</h1>
@@ -51,33 +65,36 @@ function cf7_telegram_render_settings_page() {
             <table class="form-table">
                 <tr>
                     <th><label for="cf7_telegram_bot_token">Telegram Bot Token</label></th>
-                    <td><input type="text" name="cf7_telegram_bot_token" id="cf7_telegram_bot_token" value="<?php echo esc_attr(get_option('cf7_telegram_bot_token')); ?>" class="regular-text" /></td>
-                </tr>
-                <tr>
-                    <th><label for="cf7_telegram_chat_id">Telegram Chat ID</label></th>
-                    <td><input type="text" name="cf7_telegram_chat_id" id="cf7_telegram_chat_id" value="<?php echo esc_attr(get_option('cf7_telegram_chat_id')); ?>" class="regular-text" /></td>
-                </tr>
-                <tr>
-                    <th><label for="cf7_telegram_form_id">Select CF7 Form</label></th>
-                    <td>
-                        <select name="cf7_telegram_form_id" id="cf7_telegram_form_id">
-                            <option value="0">-- Select a Form --</option>
-                            <?php foreach ($forms as $form) : ?>
-                                <option value="<?php echo esc_attr($form->id()); ?>" <?php selected($saved_form_id, $form->id()); ?>>
-                                    <?php echo esc_html($form->title()); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </td>
-                </tr>
-                <tr>
-                    <th><label for="cf7_telegram_message_template">Message Template</label></th>
-                    <td>
-                        <textarea name="cf7_telegram_message_template" id="cf7_telegram_message_template" rows="5" cols="50"><?php echo esc_textarea($saved_template); ?></textarea>
-                        <p class="description">Use [field-name] to include form fields (e.g., [your-name], [your-message]). Add emojis or text as needed.</p>
-                    </td>
+                    <td><input type="text" name="cf7_telegram_bot_token" id="cf7_telegram_bot_token" value="<?php echo esc_attr($bot_token); ?>" class="regular-text" /></td>
                 </tr>
             </table>
+
+            <h2>Form Configurations</h2>
+            <?php foreach ($forms as $form) : 
+                $form_id = $form->id();
+                $enabled = $forms_config[$form_id]['enabled'] ?? 0;
+                $chat_id = $forms_config[$form_id]['chat_id'] ?? '';
+                $template = $forms_config[$form_id]['template'] ?? "🔔 New Submission from {$form->title()}\nName: [your-name]\nMessage: [your-message]";
+            ?>
+                <h3><?php echo esc_html($form->title()); ?> (ID: <?php echo $form_id; ?>)</h3>
+                <table class="form-table">
+                    <tr>
+                        <th><label for="enabled_<?php echo $form_id; ?>">Enable Telegram Notification</label></th>
+                        <td><input type="checkbox" name="cf7_telegram_forms_config[<?php echo $form_id; ?>][enabled]" id="enabled_<?php echo $form_id; ?>" value="1" <?php checked($enabled, 1); ?> /></td>
+                    </tr>
+                    <tr>
+                        <th><label for="chat_id_<?php echo $form_id; ?>">Telegram Chat ID</label></th>
+                        <td><input type="text" name="cf7_telegram_forms_config[<?php echo $form_id; ?>][chat_id]" id="chat_id_<?php echo $form_id; ?>" value="<?php echo esc_attr($chat_id); ?>" class="regular-text" /></td>
+                    </tr>
+                    <tr>
+                        <th><label for="template_<?php echo $form_id; ?>">Message Template</label></th>
+                        <td>
+                            <textarea name="cf7_telegram_forms_config[<?php echo $form_id; ?>][template]" id="template_<?php echo $form_id; ?>" rows="5" cols="50"><?php echo esc_textarea($template); ?></textarea>
+                            <p class="description">Use [field-name] for form fields (e.g., [your-name]). Add emojis or text as needed.</p>
+                        </td>
+                    </tr>
+                </table>
+            <?php endforeach; ?>
 
             <?php submit_button('Save Settings'); ?>
         </form>
@@ -87,9 +104,18 @@ function cf7_telegram_render_settings_page() {
 
 add_action('wpcf7_mail_sent', 'cf7_telegram_send_notification', 10, 1);
 function cf7_telegram_send_notification($contact_form) {
-    $selected_form_id = get_option('cf7_telegram_form_id');
+    $form_id = $contact_form->id();
+    $forms_config = get_option('cf7_telegram_forms_config', []);
+    $bot_token = get_option('cf7_telegram_bot_token');
 
-    if (!$selected_form_id || $contact_form->id() != $selected_form_id) {
+    if (empty($forms_config[$form_id]) || empty($bot_token) || empty($forms_config[$form_id]['enabled'])) {
+        return;
+    }
+
+    $chat_id = $forms_config[$form_id]['chat_id'];
+    $template = $forms_config[$form_id]['template'];
+
+    if (empty($chat_id) || empty($template)) {
         return;
     }
 
@@ -98,14 +124,6 @@ function cf7_telegram_send_notification($contact_form) {
         return;
     }
     $form_data = $submission->get_posted_data();
-
-    $bot_token = get_option('cf7_telegram_bot_token');
-    $chat_id = get_option('cf7_telegram_chat_id');
-    $template = get_option('cf7_telegram_message_template');
-
-    if (empty($bot_token) || empty($chat_id) || empty($template)) {
-        return;
-    }
 
     $message = $template;
     foreach ($form_data as $key => $value) {
